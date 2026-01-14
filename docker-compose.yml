@@ -1,14 +1,14 @@
 version: "3.9"
 
-services:
+services: ##everything under this is a containerized service
   backend:
-    build: ./backend
+    build: ./backend #build an image
     ports:
-      - "5000:5000"
+      - "5000:5000" #porting host to container
     env_file:
       - .env
     volumes:
-      - ./backend:/app
+      - ./backend:/app #enables live reload
     restart: unless-stopped
 
   frontend:
@@ -16,8 +16,11 @@ services:
     ports:
       - "3000:3000"
     volumes:
-      - ./frontend:/app
-      - /app/node_modules
+      - ./frontend:/app #live source code
+      - /app/node_modules # 
+    environment:
+      - CHOKIDAR_USEPOLLING=true
+      - WATCHPACK_POLLING=true ## Add this to hot reload
     depends_on:
-      - backend
+      - backend #makes sure back end starts first
     restart: unless-stopped
