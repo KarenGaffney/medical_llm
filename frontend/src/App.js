@@ -14,7 +14,8 @@ function App() {
 
     const data = await res.json();
     const content =
-    data.choices?.[0]?.message?.content || JSON.stringify(data);
+    data.assistant_message || JSON.stringify(data, null, 2);
+
 
     setResponse(content.replace(/\\n/g, "\n"));
 

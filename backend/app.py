@@ -5,6 +5,7 @@ import requests
 import os
 from openai import AzureOpenAI
 import json
+from datetime import datetime, timedelta, date
 
 
 
@@ -57,9 +58,9 @@ def test_create_event():
 #### MAIN FUNCTIONS
 ####
 def get_graph_token():
-    print("TENANT_ID:", os.getenv("TENANT_ID"))
-    print("CLIENT_ID:", os.getenv("CLIENT_ID"))
-    print("CLIENT_SECRET exists:", bool(os.getenv("CLIENT_SECRET")))
+    # print("TENANT_ID:", os.getenv("TENANT_ID"))
+    # print("CLIENT_ID:", os.getenv("CLIENT_ID"))
+    # print("CLIENT_SECRET exists:", bool(os.getenv("CLIENT_SECRET")))
     url = f"https://login.microsoftonline.com/{os.getenv('TENANT_ID')}/oauth2/v2.0/token"
 
     payload = {
@@ -73,7 +74,7 @@ def get_graph_token():
     response.raise_for_status()
 
     token = response.json()["access_token"]
-    print(token)
+    # print(token)
     return token
 
 
@@ -128,43 +129,63 @@ def create_calendar_event(event_data):
 def ai_ping():
     user_input = request.json.get("message", "")
 
-    ai_response = call_azure_openai(user_input)
-    parsed = parse_llm_response(ai_response)
+    llm_text = call_azure_openai(user_input)
+    parsed = parse_llm_response(llm_text)
 
-    if parsed["intent"] == "create_calendar_event":
-        event = create_calendar_event(parsed["data"])
+    # If missing info, just return the assistant message + missing fields
+    if parsed.get("missing_fields"):
         return jsonify({
-            "status": "success",
-            "event_id": event["id"]
+            "status": "needs_clarification",
+            "assistant_message": parsed["assistant_message"],
+            "parsed": parsed
         })
 
-    return jsonify({"status": "noop"})
+    if parsed.get("intent") == "create_calendar_event":
+        event_data = build_event_payload(parsed)
+        print("Event data built:", event_data)
+        event = create_calendar_event(event_data)
+
+        return jsonify({
+            "status": "success",
+            "assistant_message": parsed["assistant_message"],
+            "event_id": event["id"],
+            "event_data": event_data,
+            "parsed": parsed
+        })
+
+    return jsonify({
+        "status": "noop",
+        "assistant_message": parsed.get("assistant_message", "I can help with scheduling."),
+        "parsed": parsed
+    })
+
 
 ## helper function to parse intent from ai response
-def parse_llm_response(ai_response):
-    try:
-        content = ai_response.choices[0].message.content
-        parsed = json.loads(content)
 
-        # Minimal validation
-        if "intent" not in parsed:
-            raise ValueError("Missing intent")
+def parse_llm_response(content: str):
+    parsed = json.loads(content)
+    return parsed
 
-        return parsed
-
-    except json.JSONDecodeError:
-        return {
-            "intent": "none",
-            "confidence": 0.0,
-            "error": "Invalid JSON from LLM"
-        }
-
-    except Exception as e:
-        return {
-            "intent": "none",
-            "confidence": 0.0,
-            "error": str(e)
-        }
+def build_event_payload(parsed):
+    print("Building event payload from parsed:")
+    data = parsed["data"]
+    date_string = "14/09/2024 15:45:30"
+    format_code = "%d/%m/%Y %H:%M:%S"
+    start = datetime.strptime(data["start_time_local"], format_code) 
+    duration = int(data.get("duration_minutes") or 30)
+    end = start + timedelta(minutes=duration)
+    #lookup_email = {'Shelly':'ksgafney@gmail.com'}
+    payload = {
+        "title": data.get("title") or "Patient appointment",
+        "notes": data.get("notes") or "created via AI scheduling assistant",
+        "attendee_name": data["attendee_name"],
+        # you will look up attendee_email from your patient DB later
+        "attendee_email": 'ksgafney@gmail.com',
+        "start_time": start.strftime("%Y-%m-%dT%H:%M:%S"),
+        "end_time": end.strftime("%Y-%m-%dT%H:%M:%S")
+    }
+    print(payload)
+    return payload
 
 
 def call_azure_openai(prompt):
@@ -177,44 +198,59 @@ def call_azure_openai(prompt):
     api_key=os.getenv("AZURE_OPENAI_API_KEY"),
     )
 
+    SYSTEM_PROMPT = """
+        You are a cheery scheduling assistant for doctors.
+
+        Return ONLY valid JSON with this exact schema:
+        {
+        "assistant_message": string,
+        "intent": "create_calendar_event" | "none",
+        "data": {
+            "attendee_name": string | null,
+            "start_time_local": string | null,  // local datetime DD/MM/YYYY HH:MM:SS 
+            "duration_minutes": number | null,
+            "title": string | null,
+            "notes": string | null // or any notes the user provided
+        },
+        "missing_fields": string[]
+        }
+
+        Rules:
+        - If the user asks to schedule, set intent=create_calendar_event.
+        - If any required fields are missing (attendee_name, start_time_local), put them in missing_fields and set assistant_message to a polite question.
+        - For relative dates like "tomorrow", resolve them using today's date: {TODAY_DATE}.
+        - Default duration_minutes to 30 if not specified.
+        - Assume timezone America/Los_Angeles unless user states otherwise.
+        - assistant_message should confirm the interpreted appointment time and attendee, and duration of appointment. 
+        - No markdown, no explanations, JSON only.
+        """
+    today = date.today().isoformat()
+    print(today)
+    SYSTEM_PROMPT = SYSTEM_PROMPT.replace("{TODAY_DATE}", today)
+    print(SYSTEM_PROMPT)
+
+
     response = client.chat.completions.create(
         messages=[
             {
                 "role": "system",
-                "content": """
-                    You are an AI scheduling assistant for doctors.
-
-                    Your job is to extract structured intent from user input.
-                    You MUST respond with valid JSON only.
-                    Do NOT include explanations or markdown.
-
-                    Supported intents:
-                    - create_calendar_event
-                    - cancel_calendar_event
-                    - list_events
-                    - none
-
-                    If required information is missing, include it in missing_fields.
-
-                    DateTimes must be ISO-8601 (YYYY-MM-DDTHH:MM:SS).
-                    Assume Pacific Time unless stated otherwise.
-                    """,
+                "content": SYSTEM_PROMPT
+            ,
             },
             {
                 "role": "user",
                 "content": prompt,
             }
         ],
-        max_tokens=4096,
-        temperature=1.0,
+        max_tokens=800,
+        temperature=0.1,
         top_p=1.0,
         model=deployment
     )
 
-    print(response.choices[0].message.content)
-
-
-    return response
+    content = response.choices[0].message.content
+    print("RAW LLM:", content, flush=True)
+    return content
 
 
 if __name__ == "__main__":
