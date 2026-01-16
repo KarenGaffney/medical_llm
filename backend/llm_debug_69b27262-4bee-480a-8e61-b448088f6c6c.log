@@ -1,0 +1,39 @@
+----
+{
+  "assistant_message": "Could you please provide the name of the attendee, the date and time for the appointment, and how long the appointment will last in minutes?",
+  "updates": {
+    "attendee_name": null,
+    "start_time_local": null,
+    "duration_minutes": null,
+    "title": "Patient appointment",
+    "notes": ""
+  },
+  "confirm_intent": "unknown"
+}----
+{
+  "assistant_message": "Could you please provide the full name of the attendee? I have the appointment scheduled for this Sunday at 14:00 for 15 minutes.",
+  "updates": {
+    "attendee_name": null,
+    "start_time_local": "22/01/2026 14:00:00",
+    "duration_minutes": 15,
+    "title": "Patient appointment",
+    "notes": ""
+  },
+  "confirm_intent": "unknown"
+}----
+{
+  "assistant_message": "Could you please confirm your appointment with Shelly on 22/01/2026 14:00:00 for 15 minutes?",
+  "updates": {
+    "attendee_name": "Shelly",
+    "start_time_local": "22/01/2026 14:00:00",
+    "duration_minutes": 15,
+    "title": "Patient appointment",
+    "notes": ""
+  },
+  "confirm_intent": "unknown"
+}----
+{
+  "assistant_message": "Could you please confirm your appointment with Shelly on 22/01/2026 14:00:00 for 15 minutes?",
+  "updates": {},
+  "confirm_intent": "yes"
+}

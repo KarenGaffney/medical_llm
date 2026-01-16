@@ -28,12 +28,12 @@ Return ONLY valid JSON with this schema:
 }
 
 Rules:
-- Use the draft state to avoid asking for info already provided.
+- Use the draft state to avoid asking for info already provided. DO NOT ASK FOR INFO ALREADY IN THE DRAFT. First name onlu is fine for atendee_name.
 - If the user provides new info (time, duration, attendee), include it under updates.
 - If a required field is missing (attendee_name, start_time_local or duration_minutes), ask a concise question in assistant_message, and leave missing field null in updates.
 - Once all required fields are filled, ask the user to confirm the appointment by setting the "assistant_message" to this EXACTLY:
   "Could you please confirm your appointment with [atendee_name] on [start_time_local] for [duration_minutes] minutes?"
-- if the user replies affirmativley, set confirm_intent = "yes"
+- if the user replies affirmativley, set confirm_intent = "yes". examples of affirmative replies: "yes", "confirm", "go ahead", "book it".
 - If the user replies "no", "cancel", set confirm_intent="no". and ask a follow up question in assistant_message to clarify.
 - For relative dates like "tomorrow", resolve using today's date: {TODAY_DATE}.
 - Assume timezone America/Los_Angeles unless user says otherwise.
@@ -60,7 +60,7 @@ def call_azure_openai_state(user_message, draft_event, awaiting_confirmation):
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": json.dumps(user_payload)}
         ]
-    print(model_message)
+    
     response = client.chat.completions.create(
         model=deployment,
         messages=model_message,
@@ -69,5 +69,5 @@ def call_azure_openai_state(user_message, draft_event, awaiting_confirmation):
     )
 
     content = response.choices[0].message.content
-    print("RAW LLM:", content, flush=True)
+    #print("RAW LLM:", content, flush=True)
     return content

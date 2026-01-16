@@ -10,8 +10,7 @@ from routes.state import get_state, state_bp
 from routes.llm import call_azure_openai_state, llm_bp
 from routes.schemas import build_event_payload_from_state, parse_llm_response, schema_bp
 from routes.graph import create_calendar_event, graph_bp
-
-
+from routes.db import db_bp
 
 app = Flask(__name__)
 CORS(app)
@@ -20,6 +19,7 @@ app.register_blueprint(graph_bp)
 app.register_blueprint(state_bp)
 app.register_blueprint(schema_bp)
 app.register_blueprint(llm_bp)
+app.register_blueprint(db_bp)
 
 ###
 ### TEST FUNCTIONS
@@ -39,10 +39,14 @@ def ai_ping():
 
     state = get_state(session_id)
 
-    # Ask LLM for updates to the draft + confirmation detection
+    # Ask LLM for updates 
     llm_text = call_azure_openai_state(user_msg, state["draft_event"], state["awaiting_confirmation"])
 
-    # Safe parse (never crash)
+    # write each message to a text file that persists in the volume for debugging
+    with open(f"/app/llm_debug_{session_id}.log", "a") as f:
+        f.write("----\n")
+        f.write(llm_text)
+
     try:
         parsed = json.loads(llm_text)
     except json.JSONDecodeError:
@@ -113,5 +117,4 @@ def ai_ping():
 
 
 if __name__ == "__main__":
-    print("🔥 LOADED THIS app.py FILE 🔥")
     app.run(host="0.0.0.0", port=5000, debug=True)
