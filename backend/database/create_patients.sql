@@ -1,0 +1,8 @@
+CREATE TABLE dbo.Patients (
+    PatientId INT IDENTITY(1,1) PRIMARY KEY,
+    FullName NVARCHAR(200) NOT NULL,
+    Email NVARCHAR(320) NOT NULL,
+    Phone NVARCHAR(50) NULL,
+    DOB DATE NULL
+);
+GO
