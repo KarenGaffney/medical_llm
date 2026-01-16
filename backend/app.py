@@ -12,6 +12,39 @@ from datetime import datetime, timedelta, date
 app = Flask(__name__)
 CORS(app)
 
+#### System Prompt
+SYSTEM_PROMPT = """
+        You are a cheery scheduling assistant for doctors.
+
+        Return ONLY valid JSON with this exact schema:
+        {
+        "assistant_message": string,
+        "intent": "create_calendar_event" | "none",
+        "data": {
+            "attendee_name": string | null,
+            "start_time_local": string | null,  // local datetime DD/MM/YYYY HH:MM:SS 
+            "duration_minutes": number | null,
+            "title": string | null,
+            "notes": string | null // or any notes the user provided,
+            "confirmed": boolean // true if user confirms the appointment details, False if not yet confirmed
+        },
+        "missing_fields": string[]
+        }
+
+        Rules:
+        - If the user asks to schedule, set intent=create_calendar_event.
+            - If any required fields are missing (attendee_name, start_time_local), put them in missing_fields and set assistant_message to a polite question.
+            - If all required fields are present, set an assistant_message with the appointment details (attendee_name, start_time_local, duration_minutes) and ask for confirmation.
+            - If the user confirms the details, set data.confirmed to true, and reply "Great! I have booked your appointment with [atendee_name] at X am/pm on Month Day Year for [duration_minutes] minutes."
+            - If the user does not confirm, set data.confirmed to false, and set assistant_message to a polite message asking for corrections.
+            - If the user provides corrections, update the data fields accordingly, set confirmed to false, and ask for confirmation again.
+        - Use prior messages in the conversation to fill missing_fields. Do not ask for information the user already provided earlier in the conversation
+        - For relative dates like "tomorrow", resolve them using today's date: {TODAY_DATE}.
+        - Assume timezone America/Los_Angeles unless user states otherwise.
+        - No markdown, no explanations, JSON only!!!!
+        - Return ONLY valid JSON with this exact above schema!!!
+        """
+
 ###
 ### TEST FUNCTIONS
 ###
@@ -127,10 +160,12 @@ def create_calendar_event(event_data):
 ## Endpoint to handle AI requests
 @app.route("/ai/ping", methods=["POST"])
 def ai_ping():
-    user_input = request.json.get("message", "")
+    body = request.json or {}
+    messages = body.get("messages", [])
 
-    llm_text = call_azure_openai(user_input)
-    parsed = parse_llm_response(llm_text)
+
+    llm_text = call_azure_openai(messages)   
+    parsed = json.loads(llm_text)
 
     # If missing info, just return the assistant message + missing fields
     if parsed.get("missing_fields"):
@@ -140,7 +175,7 @@ def ai_ping():
             "parsed": parsed
         })
 
-    if parsed.get("intent") == "create_calendar_event":
+    if parsed.get("intent") == "create_calendar_event" and parsed["data"].get("confirmed") == True:
         event_data = build_event_payload(parsed)
         print("Event data built:", event_data)
         event = create_calendar_event(event_data)
@@ -188,7 +223,7 @@ def build_event_payload(parsed):
     return payload
 
 
-def call_azure_openai(prompt):
+def call_azure_openai(messages):
 
     deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
 
@@ -198,50 +233,16 @@ def call_azure_openai(prompt):
     api_key=os.getenv("AZURE_OPENAI_API_KEY"),
     )
 
-    SYSTEM_PROMPT = """
-        You are a cheery scheduling assistant for doctors.
-
-        Return ONLY valid JSON with this exact schema:
-        {
-        "assistant_message": string,
-        "intent": "create_calendar_event" | "none",
-        "data": {
-            "attendee_name": string | null,
-            "start_time_local": string | null,  // local datetime DD/MM/YYYY HH:MM:SS 
-            "duration_minutes": number | null,
-            "title": string | null,
-            "notes": string | null // or any notes the user provided
-        },
-        "missing_fields": string[]
-        }
-
-        Rules:
-        - If the user asks to schedule, set intent=create_calendar_event.
-        - If any required fields are missing (attendee_name, start_time_local), put them in missing_fields and set assistant_message to a polite question.
-        - For relative dates like "tomorrow", resolve them using today's date: {TODAY_DATE}.
-        - Default duration_minutes to 30 if not specified.
-        - Assume timezone America/Los_Angeles unless user states otherwise.
-        - assistant_message should confirm the interpreted appointment time and attendee, and duration of appointment. 
-        - No markdown, no explanations, JSON only.
-        """
+    
     today = date.today().isoformat()
-    print(today)
-    SYSTEM_PROMPT = SYSTEM_PROMPT.replace("{TODAY_DATE}", today)
-    print(SYSTEM_PROMPT)
+    #print(today)
+    system_prompt = SYSTEM_PROMPT.replace("{TODAY_DATE}", today)
+    #print(system_prompt)
 
-
+    model_messages = [{"role": "system", "content": system_prompt}] + messages
+    print("MODEL MESSAGES:", model_messages, flush=True)
     response = client.chat.completions.create(
-        messages=[
-            {
-                "role": "system",
-                "content": SYSTEM_PROMPT
-            ,
-            },
-            {
-                "role": "user",
-                "content": prompt,
-            }
-        ],
+        messages=model_messages,
         max_tokens=800,
         temperature=0.1,
         top_p=1.0,
