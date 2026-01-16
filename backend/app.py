@@ -1,257 +1,115 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
 import os
-import requests
-import os
 from openai import AzureOpenAI
 import json
 from datetime import datetime, timedelta, date
+import uuid
+import threading
+from routes.state import get_state, state_bp
+from routes.llm import call_azure_openai_state, llm_bp
+from routes.schemas import build_event_payload_from_state, parse_llm_response, schema_bp
+from routes.graph import create_calendar_event, graph_bp
 
 
 
 app = Flask(__name__)
 CORS(app)
 
-#### System Prompt
-SYSTEM_PROMPT = """
-        You are a cheery scheduling assistant for doctors.
-
-        Return ONLY valid JSON with this exact schema:
-        {
-        "assistant_message": string,
-        "intent": "create_calendar_event" | "none",
-        "data": {
-            "attendee_name": string | null,
-            "start_time_local": string | null,  // local datetime DD/MM/YYYY HH:MM:SS 
-            "duration_minutes": number | null,
-            "title": string | null,
-            "notes": string | null // or any notes the user provided,
-            "confirmed": boolean // true if user confirms the appointment details, False if not yet confirmed
-        },
-        "missing_fields": string[]
-        }
-
-        Rules:
-        - If the user asks to schedule, set intent=create_calendar_event.
-            - If any required fields are missing (attendee_name, start_time_local), put them in missing_fields and set assistant_message to a polite question.
-            - If all required fields are present, set an assistant_message with the appointment details (attendee_name, start_time_local, duration_minutes) and ask for confirmation.
-            - If the user confirms the details, set data.confirmed to true, and reply "Great! I have booked your appointment with [atendee_name] at X am/pm on Month Day Year for [duration_minutes] minutes."
-            - If the user does not confirm, set data.confirmed to false, and set assistant_message to a polite message asking for corrections.
-            - If the user provides corrections, update the data fields accordingly, set confirmed to false, and ask for confirmation again.
-        - Use prior messages in the conversation to fill missing_fields. Do not ask for information the user already provided earlier in the conversation
-        - For relative dates like "tomorrow", resolve them using today's date: {TODAY_DATE}.
-        - Assume timezone America/Los_Angeles unless user states otherwise.
-        - No markdown, no explanations, JSON only!!!!
-        - Return ONLY valid JSON with this exact above schema!!!
-        """
+app.register_blueprint(graph_bp)
+app.register_blueprint(state_bp)
+app.register_blueprint(schema_bp)
+app.register_blueprint(llm_bp)
 
 ###
 ### TEST FUNCTIONS
 ###
 ## Function to get graph token
-@app.route("/test/graph-token", methods=["GET"])
-def test_graph_token():
-    token = get_graph_token()
-    return jsonify({
-        "token_preview": token[:30] + "...",
-        "length": len(token)
-    })
-
-@app.route("/test/graph-user", methods=["GET"])
-def test_graph_user():
-    token = get_graph_token()
-    object_id = os.getenv("OBJECT_ID")
-
-    headers = {"Authorization": f"Bearer {token}"}
-    url = f"https://graph.microsoft.com/v1.0/users/{object_id}?$select=id,displayName,userPrincipalName,mail"
-
-    r = requests.get(url, headers=headers)
-    return (r.text, r.status_code, {"Content-Type": "application/json"})
-
-
-@app.route("/test/graph-token-full", methods=["GET"])
-def test_graph_token_full():
-    return jsonify({"token": get_graph_token()})
-
-@app.route("/test/create-event", methods=["POST"])
-def test_create_event():
-    dummy_event = {
-        "title": "Test Appointment",
-        "attendee_name": "Test Patient",
-        "attendee_email": "test.patient@email.com",
-        "start_time": "2026-01-14T13:00:00",
-        "end_time": "2026-01-14T13:30:00",
-        "notes": "Created via test endpoint"
-    }
-
-    event = create_calendar_event(dummy_event)
-    return jsonify(event)
-
-#### 
-#### MAIN FUNCTIONS
-####
-def get_graph_token():
-    # print("TENANT_ID:", os.getenv("TENANT_ID"))
-    # print("CLIENT_ID:", os.getenv("CLIENT_ID"))
-    # print("CLIENT_SECRET exists:", bool(os.getenv("CLIENT_SECRET")))
-    url = f"https://login.microsoftonline.com/{os.getenv('TENANT_ID')}/oauth2/v2.0/token"
-
-    payload = {
-        "client_id": os.getenv("CLIENT_ID"),
-        "client_secret": os.getenv("CLIENT_SECRET"),
-        "scope": "https://graph.microsoft.com/.default",
-        "grant_type": "client_credentials"
-    }
-
-    response = requests.post(url, data=payload)
-    response.raise_for_status()
-
-    token = response.json()["access_token"]
-    # print(token)
-    return token
-
-
-    return response.json()["access_token"]
-
-## Endpoint to create calendar event
-def create_calendar_event(event_data):
-    token = get_graph_token()
-
-    headers = {
-        "Authorization": f"Bearer {token}",
-        "Content-Type": "application/json"
-    }
-
-    event = {
-        "subject": event_data["title"],
-        "body": {
-            "contentType": "HTML",
-            "content": event_data.get("notes", "")
-        },
-        "start": {
-            "dateTime": event_data["start_time"],
-            "timeZone": "Pacific Standard Time"
-        },
-        "end": {
-            "dateTime": event_data["end_time"],
-            "timeZone": "Pacific Standard Time"
-        },
-        "attendees": [
-            {
-                "emailAddress": {
-                    "address": event_data["attendee_email"],
-                    "name": event_data["attendee_name"]
-                },
-                "type": "required"
-            }
-        ]
-    }
-    object_id = os.getenv("OBJECT_ID")
-    #url = f"https://graph.microsoft.com/v1.0/users/{object_id}/events"
-    url = f"https://graph.microsoft.com/v1.0/users/{object_id}/calendar/events"
-
-
-
-    response = requests.post(url, headers=headers, json=event)
-    response.raise_for_status()
-
-    return response.json()
-
 ## Endpoint to handle AI requests
 @app.route("/ai/ping", methods=["POST"])
 def ai_ping():
     body = request.json or {}
-    messages = body.get("messages", [])
+    session_id = body.get("session_id")
+    user_msg = (body.get("message") or "").strip()
 
+    if not session_id:
+        return jsonify({"status": "error", "assistant_message": "Missing session_id"}), 400
+    if not user_msg:
+        return jsonify({"status": "error", "assistant_message": "Please enter a message."}), 400
 
-    llm_text = call_azure_openai(messages)   
-    parsed = json.loads(llm_text)
+    state = get_state(session_id)
 
-    # If missing info, just return the assistant message + missing fields
-    if parsed.get("missing_fields"):
+    # Ask LLM for updates to the draft + confirmation detection
+    llm_text = call_azure_openai_state(user_msg, state["draft_event"], state["awaiting_confirmation"])
+
+    # Safe parse (never crash)
+    try:
+        parsed = json.loads(llm_text)
+    except json.JSONDecodeError:
         return jsonify({
             "status": "needs_clarification",
-            "assistant_message": parsed["assistant_message"],
-            "parsed": parsed
-        })
+            "assistant_message": llm_text,
+            "debug": {"raw": llm_text}
+        }), 200
 
-    if parsed.get("intent") == "create_calendar_event" and parsed["data"].get("confirmed") == True:
-        event_data = build_event_payload(parsed)
-        print("Event data built:", event_data)
+    updates = parsed.get("updates") or {}
+    confirm_intent = (parsed.get("confirm_intent") or "unknown").lower()
+
+    # Apply updates into draft_event
+    for k, v in updates.items():
+        if k in state["draft_event"] and v is not None:
+            state["draft_event"][k] = v
+
+
+    missing = []
+    if not state["draft_event"]["attendee_name"]:
+        missing.append("attendee_name")
+    if not state["draft_event"]["start_time_local"]:
+        missing.append("start_time_local")
+
+    # If missing info, ask follow-up and keep awaiting_confirmation False
+    if missing:
+        state["awaiting_confirmation"] = False
+        return jsonify({
+            "status": "needs_clarification",
+            "assistant_message": parsed.get("assistant_message") or f"Missing: {', '.join(missing)}",
+            "state": {"draft_event": state["draft_event"], "missing_fields": missing}
+        }), 200
+
+    # If we have enough info, prompt for confirmation unless already awaiting it
+    if not state["awaiting_confirmation"] and confirm_intent != "yes":
+        state["awaiting_confirmation"] = True
+        d = state["draft_event"]
+        return jsonify({
+            "status": "awaiting_confirmation",
+            "assistant_message": parsed.get("assistant_message") or
+                f"Great — I have {d['attendee_name']} on {d['start_time_local']} for {d['duration_minutes']} minutes. Should I book it?",
+            "state": {"draft_event": d}
+        }), 200
+
+    # If user confirmed, create the calendar event
+    if confirm_intent == "yes":
+        event_data = build_event_payload_from_state(state["draft_event"])
         event = create_calendar_event(event_data)
+
+        state["awaiting_confirmation"] = False
+        state["last_event_id"] = event["id"]
 
         return jsonify({
             "status": "success",
-            "assistant_message": parsed["assistant_message"],
+            "assistant_message": f"✅ Booked! {state['draft_event']['attendee_name']} at {state['draft_event']['start_time_local']} for {state['draft_event']['duration_minutes']} minutes.",
             "event_id": event["id"],
-            "event_data": event_data,
-            "parsed": parsed
-        })
+            "event_data": event_data
+        }), 200
 
+    # Otherwise, just respond with the assistant message
     return jsonify({
-        "status": "noop",
-        "assistant_message": parsed.get("assistant_message", "I can help with scheduling."),
-        "parsed": parsed
-    })
+        "status": "ok",
+        "assistant_message": parsed.get("assistant_message", "Okay."),
+        "state": {"draft_event": state["draft_event"], "awaiting_confirmation": state["awaiting_confirmation"]}
+    }), 200
 
 
-## helper function to parse intent from ai response
-
-def parse_llm_response(content: str):
-    parsed = json.loads(content)
-    return parsed
-
-def build_event_payload(parsed):
-    print("Building event payload from parsed:")
-    data = parsed["data"]
-    date_string = "14/09/2024 15:45:30"
-    format_code = "%d/%m/%Y %H:%M:%S"
-    start = datetime.strptime(data["start_time_local"], format_code) 
-    duration = int(data.get("duration_minutes") or 30)
-    end = start + timedelta(minutes=duration)
-    #lookup_email = {'Shelly':'ksgafney@gmail.com'}
-    payload = {
-        "title": data.get("title") or "Patient appointment",
-        "notes": data.get("notes") or "created via AI scheduling assistant",
-        "attendee_name": data["attendee_name"],
-        # you will look up attendee_email from your patient DB later
-        "attendee_email": 'ksgafney@gmail.com',
-        "start_time": start.strftime("%Y-%m-%dT%H:%M:%S"),
-        "end_time": end.strftime("%Y-%m-%dT%H:%M:%S")
-    }
-    print(payload)
-    return payload
-
-
-def call_azure_openai(messages):
-
-    deployment = os.getenv("AZURE_OPENAI_DEPLOYMENT")
-
-    client = AzureOpenAI(
-    api_version=os.getenv("API_VERSION"),
-    azure_endpoint=os.getenv("AZURE_OPENAI_ENDPOINT"),
-    api_key=os.getenv("AZURE_OPENAI_API_KEY"),
-    )
-
-    
-    today = date.today().isoformat()
-    #print(today)
-    system_prompt = SYSTEM_PROMPT.replace("{TODAY_DATE}", today)
-    #print(system_prompt)
-
-    model_messages = [{"role": "system", "content": system_prompt}] + messages
-    print("MODEL MESSAGES:", model_messages, flush=True)
-    response = client.chat.completions.create(
-        messages=model_messages,
-        max_tokens=800,
-        temperature=0.1,
-        top_p=1.0,
-        model=deployment
-    )
-
-    content = response.choices[0].message.content
-    print("RAW LLM:", content, flush=True)
-    return content
 
 
 if __name__ == "__main__":
