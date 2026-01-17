@@ -1,8 +1,7 @@
 
 import threading
-from flask import Blueprint, request, jsonify
+from flask import request, jsonify
 
-state_bp = Blueprint("state", __name__, url_prefix="/state")
 
 SESSION_STORE = {}
 SESSION_LOCK = threading.Lock()
@@ -13,12 +12,19 @@ def get_state(session_id: str):
             SESSION_STORE[session_id] = {
                 "draft_event": {
                     "attendee_name": None,
-                    "start_time_local": None,  # "DD/MM/YYYY HH:MM:SS"
-                    "duration_minutes": None,
+                    "start_time_local": None,
+                    "duration_minutes": 30,
                     "title": "Patient appointment",
-                    "notes": ""
+                    "notes": None
                 },
                 "awaiting_confirmation": False,
-                "last_event_id": None
-            }
+                "mode": "schedule",          # "schedule" | "add_patient"
+                "pending_patient": {
+                    "name": None,
+                    "email": None,
+                    "phone": None,
+                    "dob": None
+                }
+                }
+
         return SESSION_STORE[session_id]

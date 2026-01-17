@@ -3,7 +3,14 @@ import { useRef, useState } from "react";
 function App() {
   const sessionIdRef = useRef(crypto.randomUUID());
   const [message, setMessage] = useState("");
-  const [chat, setChat] = useState([]); // {role, content}
+  const [chat, setChat] = useState([
+  {
+    role: "assistant",
+    content:
+      "Hi — I’m Mac, your medical appointment coordinator. I can book appointments! Who would you like to schedule, and when?",
+  },
+]);
+
 
   const sendMessage = async () => {
     const userMsg = { role: "user", content: message };
@@ -35,7 +42,7 @@ function App() {
       <div style={{ margin: "1rem 0" }}>
         {chat.map((m, idx) => (
           <div key={idx} style={{ marginBottom: "0.75rem" }}>
-            <strong>{m.role === "user" ? "Doctor" : "Assistant"}:</strong>
+            <strong>{m.role === "user" ? "Doctor" : "Mac"}:</strong>
             <div style={{ whiteSpace: "pre-wrap", wordWrap: "break-word" }}>{m.content}</div>
           </div>
         ))}

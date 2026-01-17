@@ -1,9 +1,8 @@
 import os
 import pyodbc
-from flask import Flask, app, request, jsonify, Blueprint
+from flask import Flask, app, request, jsonify
 import requests
 
-db_bp = Blueprint("db", __name__, url_prefix="/db")
 
 def get_conn():
     server = os.getenv("AZURE_SQL_SERVER")         
@@ -24,7 +23,26 @@ def get_conn():
 
 def lookup_patient_email(full_name: str):
     with get_conn() as conn:
-        cur = conn.cursor()
-        cur.execute("SELECT TOP 1 Email FROM dbo.Patients WHERE FullName = ?", full_name)
-        row = cur.fetchone()
-        return row[0] if row else None
+        try: 
+            cur = conn.cursor()
+            cur.execute("SELECT TOP 1 Email FROM dbo.Patients WHERE FullName = ?", full_name)
+            row = cur.fetchone()
+            return row[0] if row else None
+        except Exception as e:
+            print("Error looking up patient email:", e, flush=True)
+            raise
+
+def add_patient(name: str, email: str, phone: str = None, dob: str = None):
+    with get_conn() as conn:
+        try:
+            cur = conn.cursor()
+            cur.execute(
+                "INSERT INTO dbo.Patients (FullName, Email, Phone, DOB) VALUES (?, ?, ?, ?)",
+                name, email, phone, dob
+            )
+            conn.commit()
+            return 
+        except Exception as e:
+            print("Error adding patient:", e, flush=True)
+            raise
+    
