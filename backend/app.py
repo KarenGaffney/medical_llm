@@ -56,6 +56,22 @@ def ai_ping():
         parsed = json.loads(llm_text)
 
         updates = parsed.get("updates") or {}
+
+        print(updates, flush=True)
+        print(updates.get("intent"), flush=True)
+        ### UPDATE IF INTENT CHANGES
+        if updates.get("intent")!= None:
+            state["mode"] = updates.get("intent")
+            state["awaiting_confirmation"] = False
+            if state["mode"] == "schedule":
+                state["draft_event"]["attendee_name"] = updates.get("name", state["draft_event"]["attendee_name"])
+                return jsonify({
+                    "status": "needs_clarification",
+                    "assistant_message": f"Who would you like to schedule an appointment with and when?",
+                    "state": {"mode": "schedule", "draft_event": state["draft_event"]}
+                }), 200
+
+
         for k, v in updates.items():
             if k in state["pending_patient"] and v is not None:
                 state["pending_patient"][k] = v
@@ -98,7 +114,7 @@ def ai_ping():
             d = state["draft_event"]
             return jsonify({
                 "status": "ok",
-                "assistant_message": f"✅ Added {p['name']}. Now, should I book the appointment with {d['attendee_name']} on {d['start_time_local']} for {d['duration_minutes']} minutes?",
+                "assistant_message": f"✅ Added {p['name']} to the directory. Now, back to scheduling.",
                 "state": {"mode": "schedule", "draft_event": d, "awaiting_confirmation": True}
             }), 200
         
@@ -120,10 +136,10 @@ def ai_ping():
         llm_text = call_azure_openai_state(user_msg, state["draft_event"], state["awaiting_confirmation"])
 
         # write each message to a text file that persists in the volume for debugging
-        with open(f"/app/llm_debug_{session_id}.log", "a") as f:
-            f.write("----\n")
-            f.write(state["mode"] + "\n")
-            f.write(llm_text + "\n")
+        # with open(f"/app/llm_debug_{session_id}.log", "a") as f:
+        #     f.write("----\n")
+        #     f.write(state["mode"] + "\n")
+        #     f.write(llm_text + "\n")
 
         try:
             parsed = json.loads(llm_text)
@@ -133,8 +149,24 @@ def ai_ping():
                 "assistant_message": llm_text,
                 "debug": {"raw": llm_text}
             }), 200
+        
 
         updates = parsed.get("updates") or {}
+
+        print(updates, flush=True)
+        print(updates.get("intent"), flush=True)
+        ### UPDATE IF INTENT CHANGES
+        if updates.get("intent")!= None:
+            state["mode"] = updates.get("intent")
+            state["awaiting_confirmation"] = False
+            if state["mode"] == "add_patient":
+                state["pending_patient"]["name"] = updates.get("attendee_name", state["pending_patient"]["name"])
+                return jsonify({
+                    "status": "needs_clarification",
+                    "assistant_message": f"Could you give me the name and email of the patient you would like to add to directory?",
+                    "state": {"mode": "add_patient", "pending_patient": state["pending_patient"]}
+                }), 200
+            
         confirm_intent = (parsed.get("confirm_intent") or "unknown").lower()
         print('confirm_intent:', confirm_intent, flush=True)
         # Apply updates into draft_event
