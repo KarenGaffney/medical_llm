@@ -2,8 +2,11 @@
 
 ## Prerequisites
 Git
+
 Docker Desktop
+
 (Optional) VS Code + MSSQL extension (to create tables / seed data)
+
 (Optional) Postman (to test backend endpoints)
 
 ## 1) Clone the Repo
@@ -97,7 +100,7 @@ Networking / firewall
 3. Networking
 4. add your current client IPv4
 
-!!!If you change networks: you will need to update this IP when it changes!!!
+**!!! If you change networks: you will need to update this IP when it changes!!!**
 
 ## 11) Run the App
 In the same level as docker-compose.yaml, run 
@@ -108,4 +111,5 @@ In the same level as docker-compose.yaml, run
 Navigate to localhost:3000 
 
 # Happy Scheduling!
+
 
