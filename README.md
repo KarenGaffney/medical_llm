@@ -4,6 +4,9 @@ MAC is your medical appointment coordinator! MAC is a chatbot that parses intent
 # Demo Video
 https://youtu.be/SwELf1vWO0Y
 
+# Presentation
+https://github.com/KarenGaffney/medical_llm/blob/main/MAC%20-%20the%20medical%20appointment%20coordinator%20(A%20chatbot%20prototype).pdf
+
 # Setup Instructions for the medical_llm app
 
 ## Prerequisites
@@ -117,6 +120,7 @@ In the same level as docker-compose.yaml, run
 Navigate to localhost:3000 
 
 # Happy Scheduling!
+
 
 
 
