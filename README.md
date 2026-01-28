@@ -1,3 +1,9 @@
+# What is MAC?
+MAC is your medical appointment coordinator! MAC is a chatbot that parses intent and relevant information from a natural conversation with Doctors to schedule appointments and add new patients to a patient database. MAC shows that properly structured AI workflows can translate human intent into real-world actions without sacrificing security or transparency.
+
+# Demo Video
+https://youtu.be/SwELf1vWO0Y
+
 # Setup Instructions for the medical_llm app
 
 ## Prerequisites
@@ -111,5 +117,6 @@ In the same level as docker-compose.yaml, run
 Navigate to localhost:3000 
 
 # Happy Scheduling!
+
 
 
